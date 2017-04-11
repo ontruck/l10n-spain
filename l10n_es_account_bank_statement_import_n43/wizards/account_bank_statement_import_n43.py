@@ -5,6 +5,8 @@
 
 from openerp import models, fields, api, exceptions, _
 from datetime import datetime
+import logging
+_logger = logging.getLogger(__name__)
 
 account_mapping = {
     '01': '4300%00',
@@ -180,7 +182,8 @@ class AccountBankStatementImport(models.TransientModel):
                 # CTRL-Z (^Z), is often used as an end-of-file marker in DOS
                 continue
             else:  # pragma: no cover
-                raise exceptions.UserError(
+                _logger.info("Bank statement file hasn't N43 format")
+                raise exceptions.ValidationError(
                     _('Record type %s is not valid.') % raw_line[0:2])
             # Update the record counter
             st_data['_num_records'] += 1
@@ -267,8 +270,21 @@ class AccountBankStatementImport(models.TransientModel):
                     [('name', 'ilike', name)], limit=1)
         return partner
 
+    def _get_partner_from_bankinter(self, conceptos):
+        partner = self.env['res.partner']
+        # Try to match from partner name
+        if conceptos.get('01'):
+            name = conceptos['01'][0]
+            if name:
+                parts = name.split('/')
+                if len(parts) > 1:
+                    partner = self.env['res.partner'].search([
+                        ('name', 'ilike', parts[1]),
+                    ], limit=1)
+        return partner
+
     def _get_partner(self, line):
-        if not line.get('conceptos'):
+        if not (type(line) is dict and line.get('conceptos')):
             return self.env['res.partner']
         partner = self._get_partner_from_caixabank(line['conceptos'])
         if not partner:
@@ -277,6 +293,8 @@ class AccountBankStatementImport(models.TransientModel):
             partner = self._get_partner_from_bankia(line['conceptos'])
         if not partner:
             partner = self._get_partner_from_sabadell(line['conceptos'])
+        if not partner:
+            partner = self._get_partner_from_bankinter(line['conceptos'])
         return partner
 
     def _get_account(self, line, journal):  # pragma: no cover
